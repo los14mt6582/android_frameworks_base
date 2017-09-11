@@ -1422,7 +1422,6 @@ public final class BatteryStatsService extends IBatteryStats.Stub
                 return data;
             }
         }
-        Slog.e(TAG, "no controller energy info supplied");
         return null;
     }
 
