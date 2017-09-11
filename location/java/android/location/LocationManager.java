@@ -80,6 +80,7 @@ public class LocationManager {
             new HashMap<>();
     private final HashMap<GnssNavigationMessageEvent.Callback, GnssNavigationMessage.Callback>
             mNavigationMessageBridge = new HashMap<>();
+    private final GpsStatus mGpsStatus = new GpsStatus();
     private GnssStatus mGnssStatus;
     private int mTimeToFirstFix;
 
@@ -1642,6 +1643,31 @@ public class LocationManager {
                 float[] cn0s, float[] elevations, float[] azimuths) {
             if (mGnssCallback != null) {
                 mGnssStatus = new GnssStatus(svCount, prnWithFlags, cn0s, elevations, azimuths);
+
+                Message msg = Message.obtain();
+                msg.what = GpsStatus.GPS_EVENT_SATELLITE_STATUS;
+                // remove any SV status messages already in the queue
+                mGnssHandler.removeMessages(GpsStatus.GPS_EVENT_SATELLITE_STATUS);
+                mGnssHandler.sendMessage(msg);
+            }
+        }
+
+        @Override
+        public void onGnssSvStatusChanged(int gnssSvCount, int[] prns, float[] snrs,
+                float[] elevations, float[] azimuths,
+                boolean[] ephemerisPresences,
+                boolean[] almanacPresences,
+                boolean[] usedInFix) {
+            if (mGnssCallback != null) {
+                mGpsStatus.setStatusFromGnss(
+                        gnssSvCount,
+                        prns,
+                        snrs,
+                        elevations,
+                        azimuths,
+                        ephemerisPresences,
+                        almanacPresences,
+                        usedInFix);
 
                 Message msg = Message.obtain();
                 msg.what = GpsStatus.GPS_EVENT_SATELLITE_STATUS;

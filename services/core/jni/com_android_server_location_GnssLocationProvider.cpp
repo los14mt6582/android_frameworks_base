@@ -22,6 +22,7 @@
 #include "jni.h"
 #include "hardware/hardware.h"
 #include "hardware/gps_internal.h"
+#include "hardware/gps_mtk.h"
 #include "hardware_legacy/power.h"
 #include "utils/Log.h"
 #include "utils/misc.h"
@@ -40,6 +41,7 @@ static jobject mCallbacksObj = NULL;
 static jmethodID method_reportLocation;
 static jmethodID method_reportStatus;
 static jmethodID method_reportSvStatus;
+static jmethodID method_reportMTKLegacyGnssSvStatus;
 static jmethodID method_reportAGpsStatus;
 static jmethodID method_reportNmea;
 static jmethodID method_setEngineCapabilities;
@@ -92,6 +94,7 @@ static const GnssConfigurationInterface* sGnssConfigurationInterface = NULL;
 
 // temporary storage for GPS callbacks
 static GnssSvInfo sGnssSvList[GNSS_MAX_SATELLITE_COUNT];
+static MTKLegacyGnssSvStatus  sMTKLegacyGnssSvStatus;
 static size_t sGnssSvListSize;
 static const char* sNmeaString;
 static int sNmeaStringLength;
@@ -217,6 +220,13 @@ static void gnss_sv_status_callback(GnssSvStatus* sv_status) {
     checkAndClearExceptionFromCallback(env, __FUNCTION__);
 }
 
+static void gnss_sv_status_callback_mtk(MTKLegacyGnssSvStatus* sv_status) {
+    JNIEnv* env = AndroidRuntime::getJNIEnv();
+    memcpy(&sMTKLegacyGnssSvStatus, sv_status, sizeof(sMTKLegacyGnssSvStatus));
+    env->CallVoidMethod(mCallbacksObj, method_reportMTKLegacyGnssSvStatus);
+    checkAndClearExceptionFromCallback(env, __FUNCTION__);
+}
+
 static void nmea_callback(GpsUtcTime timestamp, const char* nmea, int length)
 {
     JNIEnv* env = AndroidRuntime::getJNIEnv();
@@ -266,8 +276,8 @@ static pthread_t create_thread_callback(const char* name, void (*start)(void *),
     return (pthread_t)AndroidRuntime::createJavaThread(name, start, arg);
 }
 
-GpsCallbacks sGpsCallbacks = {
-    sizeof(GpsCallbacks),
+GpsCallbacks_mtk sGpsCallbacks = {
+    sizeof(GpsCallbacks_mtk),
     location_callback,
     status_callback,
     sv_status_callback,
@@ -279,6 +289,7 @@ GpsCallbacks sGpsCallbacks = {
     request_utc_time_callback,
     set_system_info_callback,
     gnss_sv_status_callback,
+    gnss_sv_status_callback_mtk,
 };
 
 static void xtra_download_request_callback()
@@ -563,6 +574,7 @@ static void android_location_GnssLocationProvider_class_init_native(JNIEnv* env,
     method_reportLocation = env->GetMethodID(clazz, "reportLocation", "(IDDDFFFJ)V");
     method_reportStatus = env->GetMethodID(clazz, "reportStatus", "(I)V");
     method_reportSvStatus = env->GetMethodID(clazz, "reportSvStatus", "()V");
+    method_reportMTKLegacyGnssSvStatus = env->GetMethodID(clazz, "reportMTKLegacyGnssSvStatus", "()V");
     method_reportAGpsStatus = env->GetMethodID(clazz, "reportAGpsStatus", "(II[B)V");
     method_reportNmea = env->GetMethodID(clazz, "reportNmea", "(J)V");
     method_setEngineCapabilities = env->GetMethodID(clazz, "setEngineCapabilities", "(I)V");
@@ -652,7 +664,7 @@ static jboolean android_location_GnssLocationProvider_init(JNIEnv* env, jobject 
         mCallbacksObj = env->NewGlobalRef(obj);
 
     // fail if the main interface fails to initialize
-    if (!sGpsInterface || sGpsInterface->init(&sGpsCallbacks) != 0)
+    if (!sGpsInterface || sGpsInterface->init((GpsCallbacks*)&sGpsCallbacks) != 0)
         return JNI_FALSE;
 
     // if XTRA initialization fails we will disable it by sGpsXtraInterface to NULL,
@@ -753,6 +765,44 @@ static jint android_location_GnssLocationProvider_read_sv_status(JNIEnv* env, jo
     env->ReleaseFloatArrayElements(elevArray, elev, 0);
     env->ReleaseFloatArrayElements(azumArray, azim, 0);
     return (jint) sGnssSvListSize;
+}
+
+static jint android_location_GnssLocationProvider_read_gnss_sv_status(JNIEnv* env, jobject obj,
+        jintArray prnArray, jfloatArray snrArray, jfloatArray elevArray, jfloatArray azumArray,
+        jbooleanArray ephemerisPresencesArray,
+        jbooleanArray almanacPresencesArray,
+        jbooleanArray usedInFixArray)
+{
+    // this should only be called from within a call to reportGnssSvStatus
+
+    jint* prns = env->GetIntArrayElements(prnArray, 0);
+    jfloat* snrs = env->GetFloatArrayElements(snrArray, 0);
+    jfloat* elev = env->GetFloatArrayElements(elevArray, 0);
+    jfloat* azim = env->GetFloatArrayElements(azumArray, 0);
+    jboolean* ephemeris_presences = env->GetBooleanArrayElements(ephemerisPresencesArray, 0);
+    jboolean* almanac_presences = env->GetBooleanArrayElements(almanacPresencesArray, 0);
+    jboolean* used_in_fix = env->GetBooleanArrayElements(usedInFixArray, 0);
+
+    int num_svs = sMTKLegacyGnssSvStatus.num_svs;
+    for (int i = 0; i < num_svs; i++) {
+        prns[i] = sMTKLegacyGnssSvStatus.sv_list[i].prn;
+        snrs[i] = sMTKLegacyGnssSvStatus.sv_list[i].snr;
+        elev[i] = sMTKLegacyGnssSvStatus.sv_list[i].elevation;
+        azim[i] = sMTKLegacyGnssSvStatus.sv_list[i].azimuth;
+
+        ephemeris_presences[i] = sMTKLegacyGnssSvStatus.sv_list[i].has_ephemeris ? 1 : 0;
+        almanac_presences[i] = sMTKLegacyGnssSvStatus.sv_list[i].has_almanac ? 1 : 0;
+        used_in_fix[i] = sMTKLegacyGnssSvStatus.sv_list[i].used_in_fix ? 1 : 0;
+    }
+
+    env->ReleaseIntArrayElements(prnArray, prns, 0);
+    env->ReleaseFloatArrayElements(snrArray, snrs, 0);
+    env->ReleaseFloatArrayElements(elevArray, elev, 0);
+    env->ReleaseFloatArrayElements(azumArray, azim, 0);
+    env->ReleaseBooleanArrayElements(ephemerisPresencesArray, ephemeris_presences, 0);
+    env->ReleaseBooleanArrayElements(almanacPresencesArray, almanac_presences, 0);
+    env->ReleaseBooleanArrayElements(usedInFixArray, used_in_fix, 0);
+    return (jint) num_svs;
 }
 
 static void android_location_GnssLocationProvider_agps_set_reference_location_cellid(
@@ -1636,6 +1686,9 @@ static const JNINativeMethod sMethods[] = {
     {"native_read_sv_status",
             "([I[F[F[F)I",
             (void*)android_location_GnssLocationProvider_read_sv_status},
+    {"native_read_gnss_sv_status",
+            "([I[F[F[F[Z[Z[Z)I",
+            (void*)android_location_GnssLocationProvider_read_gnss_sv_status},
     {"native_read_nmea", "([BI)I", (void*)android_location_GnssLocationProvider_read_nmea},
     {"native_inject_time", "(JJI)V", (void*)android_location_GnssLocationProvider_inject_time},
     {"native_inject_location",
