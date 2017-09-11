@@ -137,8 +137,6 @@ public class KernelUidCpuTimeReader {
                 mLastSystemTimeUs.put(uid, systemTimeUs);
                 mLastPowerMaUs.put(uid, powerMaUs);
             }
-        } catch (IOException e) {
-            Slog.e(TAG, "Failed to read uid_cputime: " + e.getMessage());
         }
         mLastTimeReadUs = nowUs;
     }
